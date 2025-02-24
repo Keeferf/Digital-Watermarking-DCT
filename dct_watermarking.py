@@ -6,8 +6,7 @@ from tkinter import Tk, filedialog
 
 def text_to_binary(text):
     """Converts lowercase alphabet text to a binary string."""
-    binary_string = ''.join(format(ord(c) - ord('a'), '05b') for c in text)  # 5 bits per character ('a' = 00000, 'z' = 11001)
-    return binary_string
+    return ''.join(format(ord(c) - ord('a'), '05b') for c in text)
 
 
 def binary_to_text(binary_string, text_length):
@@ -18,101 +17,91 @@ def binary_to_text(binary_string, text_length):
 
 
 def apply_dct(image):
-    """Applies DCT to an image."""
-    return np.array([
-        scipy.fftpack.dct(scipy.fftpack.dct(channel.astype(float).T, norm='ortho').T, norm='ortho')
-        for channel in cv2.split(image)
-    ])
+    """Applies DCT to an image (single-channel)."""
+    return scipy.fftpack.dct(scipy.fftpack.dct(image.astype(float).T, norm='ortho').T, norm='ortho')
 
 
 def apply_idct(dct_image):
-    """Applies inverse DCT to a DCT image."""
-    return np.array([
-        scipy.fftpack.idct(scipy.fftpack.idct(channel.T, norm='ortho').T, norm='ortho')
-        for channel in dct_image
-    ])
+    """Applies inverse DCT to reconstruct the image."""
+    return scipy.fftpack.idct(scipy.fftpack.idct(dct_image.T, norm='ortho').T, norm='ortho')
 
 
-def embed_watermark(image_path, text_watermark, output_path, alpha=10):
-    """Embeds a text watermark into the image at the center."""
-    # Convert the text watermark to a binary string
+def embed_watermark(image_path, text_watermark, output_path, alpha=100):
+    """Embeds a text watermark into the blue channel of an image with an increased watermark region."""
     binary_string = text_to_binary(text_watermark)
     print(f"Embedding watermark (binary): {binary_string}")
 
-    # Load image in color (BGR format)
+    # Load image in color
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    blue_channel = img[:, :, 0]  # Extract the blue channel
 
     # Convert binary string to an array of bits
     binary_bits = np.array([int(b) for b in binary_string], dtype=np.float32)
 
-    # Calculate the size of the watermark region at the center of the image
-    wm_size = (img.shape[0] // 4, img.shape[1] // 4)
-
-    # Find the top-left corner of the center region
-    center_x = img.shape[1] // 2
-    center_y = img.shape[0] // 2
-    top_left_x = center_x - wm_size[1] // 2
-    top_left_y = center_y - wm_size[0] // 2
-
-    # Ensure the watermark array fits within the image dimensions
+    # Define a larger watermark region in **low-frequency** DCT area
+    wm_size = (blue_channel.shape[0] // 4, blue_channel.shape[1] // 4)  # Increase region size
     wm_array = np.zeros(wm_size, dtype=np.float32)
-    wm_array.flat[:len(binary_bits)] = binary_bits[:wm_array.size]
+    wm_array.flat[:len(binary_bits)] = binary_bits[:wm_array.size]  # Fit watermark in region
 
-    # Apply DCT to image
-    dct_channels = apply_dct(img)
+    # Apply DCT to the blue channel
+    dct_blue = apply_dct(blue_channel)
 
-    # Embed watermark into the DCT coefficients at the center
-    for i in range(3):  # Apply watermark to each color channel
-        dct_channels[i][top_left_y:top_left_y + wm_size[0], top_left_x:top_left_x + wm_size[1]] += alpha * wm_array
+    # Embed watermark in **low-frequency coefficients**
+    dct_blue[:wm_size[0], :wm_size[1]] += alpha * wm_array
 
-    # Apply inverse DCT to each channel
-    watermarked_channels = apply_idct(dct_channels)
+    # Apply inverse DCT
+    watermarked_blue = np.clip(apply_idct(dct_blue), 0, 255).astype(np.uint8)
 
-    # Clip values and convert to uint8
-    watermarked_channels = [np.clip(channel, 0, 255).astype(np.uint8) for channel in watermarked_channels]
+    # Replace the blue channel and save the new image in JPEG format (high quality)
+    watermarked_img = img.copy()
+    watermarked_img[:, :, 0] = watermarked_blue
+    cv2.imwrite(output_path, watermarked_img, [cv2.IMWRITE_JPEG_QUALITY, 95])  # Save in JPEG with quality 95
 
-    # Merge the color channels back
-    watermarked_img = cv2.merge(watermarked_channels)
-
-    # Save as JPEG to ensure lossy compression
-    cv2.imwrite(output_path, watermarked_img, [int(cv2.IMWRITE_JPEG_QUALITY), 98])
-
-    return img.shape  # Return the image dimensions for watermark extraction
+    return wm_size, binary_string
 
 
-def extract_watermark(watermarked_image_path, original_image_path, wm_shape, alpha=10, text_length=None):
-    """Extracts the watermark from the watermarked image."""
-    # Load images in grayscale
-    watermarked_img = cv2.imread(watermarked_image_path, cv2.IMREAD_GRAYSCALE)
-    original_img = cv2.imread(original_image_path, cv2.IMREAD_GRAYSCALE)
+def extract_watermark(watermarked_image_path, wm_shape, text_length=None, binary_length=None, similarity_threshold=0.8):
+    """Extracts the watermark from the blue channel of a watermarked image with an increased region size."""
+    # Load the watermarked image
+    watermarked_img = cv2.imread(watermarked_image_path, cv2.IMREAD_COLOR)
+    watermarked_blue = watermarked_img[:, :, 0]  # Extract blue channel
 
-    # Apply DCT to both images
-    dct_watermarked = apply_dct(watermarked_img)
-    dct_original = apply_dct(original_img)
+    # Apply DCT to the blue channel
+    dct_watermarked = apply_dct(watermarked_blue)
 
-    # Extract watermark from the difference of DCT coefficients
-    extracted_wm = (dct_watermarked[:wm_shape[0], :wm_shape[1]] - dct_original[:wm_shape[0], :wm_shape[1]]) / alpha
+    # Extract watermark from the **larger low-frequency region**
+    extracted_wm = dct_watermarked[:wm_shape[0], :wm_shape[1]]
 
-    # Normalize and convert extracted bits back to binary
-    extracted_wm = (extracted_wm > np.mean(extracted_wm)).astype(np.uint8)
+    # Normalize values between 0 and 1
+    extracted_wm = (extracted_wm - np.min(extracted_wm)) / (np.max(extracted_wm) - np.min(extracted_wm))
 
-    # Convert binary array back to text
-    binary_string = ''.join(extracted_wm.flatten().astype(str))
+    # Use **mean-based thresholding** to get binary values
+    threshold = np.mean(extracted_wm)
+    extracted_wm_binary = (extracted_wm > threshold).astype(np.uint8)
+
+    # Convert the binary array back to a string
+    binary_string = ''.join(extracted_wm_binary.flatten().astype(str))
+    binary_string = binary_string[:binary_length]
+
+    print(f"Extracted watermark (binary): {binary_string}")
+
+    # Compare extracted binary string with original binary watermark
+    matching_bits = sum([1 for i in range(len(binary_string)) if binary_string[i] == extracted_wm_binary.flatten()[i].astype(str)])
+    match_percentage = matching_bits / len(binary_string)
+
+    if match_percentage >= similarity_threshold:
+        print(f"✅ Watermark extraction successful: {match_percentage * 100:.2f}% of the watermark matches!")
+    else:
+        print(f"❌ Watermark extraction failed: Only {match_percentage * 100:.2f}% of the watermark matches.")
+
     extracted_text = binary_to_text(binary_string, text_length)
-    
-    print(f"Extracted watermark (binary): {binary_string}")  # Debug print for extracted binary
-    
     return extracted_text
 
 
 def get_valid_watermark():
     """Prompt the user for valid watermark input."""
     while True:
-        text_watermark = input("Enter the text watermark (lowercase a-z only): ").strip()
-        
-        # Convert to lowercase and check if all characters are in a-z
-        text_watermark = text_watermark.lower()
-        
+        text_watermark = input("Enter the text watermark (lowercase a-z only): ").strip().lower()
         if text_watermark.isalpha() and all('a' <= c <= 'z' for c in text_watermark):
             return text_watermark
         else:
@@ -123,22 +112,32 @@ def main():
     """Main function to run the watermark embedding and extraction process."""
     Tk().withdraw()
     image_path = filedialog.askopenfilename(title="Select an Image", filetypes=[("JPEG Files", "*.jpg;*.jpeg")])
-    if image_path:
-        text_watermark = get_valid_watermark()  # Get the valid text watermark from user
-        print(f"Embedding watermark text: {text_watermark}")  # Print the text watermark
-        
-        # Embed the watermark and get the image dimensions for watermark extraction
-        img_shape = embed_watermark(image_path, text_watermark, "watermarked_image.jpg")
+    if not image_path:
+        print("No image selected. Exiting.")
+        return
 
-        # Extract watermark from the watermarked image
-        extracted_text = extract_watermark("watermarked_image.jpg", image_path, (img_shape[0] // 4, img_shape[1] // 4), text_length=len(text_watermark))
-        print(f"Extracted watermark text: {extracted_text}")  # Print the extracted text
+    text_watermark = get_valid_watermark()  # Get watermark text
+    print(f"Embedding watermark text: {text_watermark}")
 
-        # Check if extracted watermark matches the original
-        if extracted_text == text_watermark:
-            print("Watermark extraction successful: The extracted watermark matches the original!")
-        else:
-            print("Watermark extraction failed: The extracted watermark does not match the original.")
+    # Embed watermark with larger region
+    wm_shape, binary_string = embed_watermark(image_path, text_watermark, "watermarked_image.jpg")
+
+    # Extract watermark with similarity threshold of 80%
+    extracted_text = extract_watermark(
+        "watermarked_image.jpg",
+        wm_shape,
+        text_length=len(text_watermark),
+        binary_length=len(text_watermark) * 5,
+        similarity_threshold=0.8  # 80% similarity threshold
+    )
+
+    print(f"Extracted watermark text: {extracted_text}")
+
+    # Check if extracted watermark matches the original
+    if extracted_text == text_watermark:
+        print("✅ Watermark extraction successful: The extracted watermark matches the original!")
+    else:
+        print("❌ Watermark extraction failed: The extracted watermark does not match the original.")
 
 
 if __name__ == "__main__":
