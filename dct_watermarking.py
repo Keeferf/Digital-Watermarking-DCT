@@ -34,7 +34,7 @@ def apply_idct(dct_image):
 
 
 def embed_watermark(image_path, text_watermark, output_path, alpha=10):
-    """Embeds a text watermark into the image."""
+    """Embeds a text watermark into the image at the center."""
     # Convert the text watermark to a binary string
     binary_string = text_to_binary(text_watermark)
     print(f"Embedding watermark (binary): {binary_string}")
@@ -45,17 +45,25 @@ def embed_watermark(image_path, text_watermark, output_path, alpha=10):
     # Convert binary string to an array of bits
     binary_bits = np.array([int(b) for b in binary_string], dtype=np.float32)
 
-    # Reshape watermark array to match the upper-left corner size of the image
+    # Calculate the size of the watermark region at the center of the image
     wm_size = (img.shape[0] // 4, img.shape[1] // 4)
+
+    # Find the top-left corner of the center region
+    center_x = img.shape[1] // 2
+    center_y = img.shape[0] // 2
+    top_left_x = center_x - wm_size[1] // 2
+    top_left_y = center_y - wm_size[0] // 2
+
+    # Ensure the watermark array fits within the image dimensions
     wm_array = np.zeros(wm_size, dtype=np.float32)
     wm_array.flat[:len(binary_bits)] = binary_bits[:wm_array.size]
 
     # Apply DCT to image
     dct_channels = apply_dct(img)
 
-    # Embed watermark into the DCT coefficients
+    # Embed watermark into the DCT coefficients at the center
     for i in range(3):  # Apply watermark to each color channel
-        dct_channels[i][:wm_size[0], :wm_size[1]] += alpha * wm_array
+        dct_channels[i][top_left_y:top_left_y + wm_size[0], top_left_x:top_left_x + wm_size[1]] += alpha * wm_array
 
     # Apply inverse DCT to each channel
     watermarked_channels = apply_idct(dct_channels)
