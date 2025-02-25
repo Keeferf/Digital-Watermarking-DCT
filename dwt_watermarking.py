@@ -1,6 +1,6 @@
-import cv2
 import numpy as np
 import pywt
+from PIL import Image
 from tkinter import Tk, filedialog
 
 def text_to_binary(text):
@@ -22,8 +22,11 @@ def embed_watermark(image_path, text_watermark, output_path, alpha=0.5):
     print(f"Embedded watermark (binary): {binary_string}")
     print(f"Embedded watermark text: {text_watermark}")
 
-    img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    blue_channel = img[:, :, 0]
+    img = Image.open(image_path).convert("RGB")
+    img_array = np.array(img)
+    
+    # Extract blue channel
+    blue_channel = img_array[:, :, 2].astype(np.float32)
 
     coeffs2 = apply_dwt(blue_channel)
     LL, (LH, HL, HH) = coeffs2
@@ -36,17 +39,25 @@ def embed_watermark(image_path, text_watermark, output_path, alpha=0.5):
 
     watermarked_coeffs2 = (LL, (LH, HL, HH))
     watermarked_blue = np.clip(apply_idwt(watermarked_coeffs2), 0, 255).astype(np.uint8)
-    watermarked_blue_resized = cv2.resize(watermarked_blue, (blue_channel.shape[1], blue_channel.shape[0]))
 
-    watermarked_img = img.copy()
-    watermarked_img[:, :, 0] = watermarked_blue_resized
-    cv2.imwrite(output_path, watermarked_img, [cv2.IMWRITE_WEBP_QUALITY, 100, cv2.IMWRITE_WEBP_LOSSLESS, 1])
+    # Merge the watermarked blue channel back
+    watermarked_img_array = img_array.copy()
+    watermarked_img_array[:, :, 2] = watermarked_blue
+
+    # Convert back to Pillow image
+    watermarked_img = Image.fromarray(watermarked_img_array)
+
+    # Save using Pillow (lossless WebP)
+    watermarked_img.save(output_path, "WEBP", lossless=True)
 
     return wm_size, binary_string
 
 def extract_watermark(watermarked_image_path, wm_shape, binary_length, similarity_threshold=0.8):
-    watermarked_img = cv2.imread(watermarked_image_path, cv2.IMREAD_COLOR)
-    watermarked_blue = watermarked_img[:, :, 0]
+    img = Image.open(watermarked_image_path).convert("RGB")
+    img_array = np.array(img)
+
+    # Extract blue channel
+    watermarked_blue = img_array[:, :, 2].astype(np.float32)
 
     coeffs2 = apply_dwt(watermarked_blue)
     LL, (LH, HL, HH) = coeffs2
@@ -79,13 +90,26 @@ def get_valid_watermark():
 
 def open_file_dialog(file_types):
     root = Tk()
-    root.withdraw()
-    return filedialog.askopenfilename(filetypes=file_types)
+    root.withdraw()  # Hide the root window
+    root.attributes("-topmost", True)  # Make the file dialog appear on top of all windows
+    file_path = filedialog.askopenfilename(filetypes=file_types)
+    root.destroy()  # Destroy the root window after the file dialog is closed
+    return file_path
 
 def main():
-    mode = input("Select mode (1 = Embed watermark, 2 = Verify watermark): ").strip()
+    print("Welcome to the Watermarking Tool!")
+    print("1. Embed a watermark into an image")
+    print("2. Verify a watermark in an image")
+    
+    while True:
+        mode = input("Select an option (1 or 2): ").strip()
+        if mode in ["1", "2"]:
+            break
+        else:
+            print("Invalid option! Please select 1 or 2.")
 
     if mode == "1":
+        print("Please select an image to embed the watermark.")
         image_path = open_file_dialog([("JPEG Files", "*.jpg;*.jpeg"), ("PNG Files", "*.png")])
         if not image_path:
             print("No image selected. Exiting.")
@@ -94,13 +118,11 @@ def main():
         text_watermark = get_valid_watermark()
         print(f"Embedding watermark text: {text_watermark}")
 
-        webp_path = "temp_image.webp"
-        img = cv2.imread(image_path)
-        cv2.imwrite(webp_path, img, [cv2.IMWRITE_WEBP_QUALITY, 100, cv2.IMWRITE_WEBP_LOSSLESS, 1])
-
-        wm_shape, binary_string = embed_watermark(webp_path, text_watermark, "watermarked_image.webp")
+        wm_shape, binary_string = embed_watermark(image_path, text_watermark, "watermarked_image.webp")
+        print("Watermark embedded successfully!")
 
     elif mode == "2":
+        print("Please select an image to verify the watermark.")
         image_path = open_file_dialog([("WebP Files", "*.webp")])
         if not image_path:
             print("No image selected. Exiting.")
