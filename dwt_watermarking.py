@@ -77,13 +77,16 @@ def get_valid_watermark():
         else:
             print("Invalid input! Please enter only lowercase letters (a-z).")
 
+def open_file_dialog(file_types):
+    root = Tk()
+    root.withdraw()
+    return filedialog.askopenfilename(filetypes=file_types)
+
 def main():
-    print("Select mode: (1) Embed watermark, (2) Verify watermark")
-    mode = input().strip()
+    mode = input("Select mode (1 = Embed watermark, 2 = Verify watermark): ").strip()
 
     if mode == "1":
-        Tk().withdraw()  # Hide the Tkinter root window
-        image_path = filedialog.askopenfilename(title="Select an Image", filetypes=[("JPEG Files", "*.jpg;*.jpeg"), ("PNG Files", "*.png")])
+        image_path = open_file_dialog([("JPEG Files", "*.jpg;*.jpeg"), ("PNG Files", "*.png")])
         if not image_path:
             print("No image selected. Exiting.")
             return
@@ -98,8 +101,7 @@ def main():
         wm_shape, binary_string = embed_watermark(webp_path, text_watermark, "watermarked_image.webp")
 
     elif mode == "2":
-        Tk().withdraw()  # Hide the Tkinter root window
-        image_path = filedialog.askopenfilename(title="Select a Watermarked Image", filetypes=[("WebP Files", "*.webp")])
+        image_path = open_file_dialog([("WebP Files", "*.webp")])
         if not image_path:
             print("No image selected. Exiting.")
             return
@@ -109,7 +111,7 @@ def main():
 
         extracted_text = extract_watermark(
             image_path,
-            wm_shape=(100, 100),  # Example watermark shape (adjust as needed)
+            wm_shape=(100, 100),
             binary_length=len(text_watermark) * 5,
             similarity_threshold=0.8
         )
