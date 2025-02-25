@@ -52,7 +52,7 @@ def embed_watermark(image_path, text_watermark, output_path, alpha=0.5):
 
     return wm_size, binary_string
 
-def extract_watermark(watermarked_image_path, wm_shape, binary_length, similarity_threshold=0.8):
+def extract_watermark(watermarked_image_path, wm_shape, binary_length, similarity_threshold=0.9):
     img = Image.open(watermarked_image_path).convert("RGB")
     img_array = np.array(img)
 
@@ -74,9 +74,9 @@ def extract_watermark(watermarked_image_path, wm_shape, binary_length, similarit
     match_percentage = np.mean([1 for i in range(len(binary_string)) if binary_string[i] == extracted_wm_binary.flatten()[i].astype(str)])
 
     if match_percentage >= similarity_threshold:
-        print(f"✅ Watermark extraction successful: {match_percentage * 100:.2f}% of the watermark matches!")
+        print(f"✅ Watermark extraction successful: {match_percentage * 100:.2f}% of the binary watermark matches the original!")
     else:
-        print(f"❌ Watermark extraction failed: Only {match_percentage * 100:.2f}% of the watermark matches.")
+        print(f"❌ Watermark extraction failed: Only {match_percentage * 100:.2f}% of the binary watermark matches the original.")
 
     return extracted_text
 
@@ -135,13 +135,13 @@ def main():
             image_path,
             wm_shape=(100, 100),
             binary_length=len(text_watermark) * 5,
-            similarity_threshold=0.8
+            similarity_threshold=0.9
         )
 
         if extracted_text == text_watermark:
-            print("✅ Watermark extraction successful: The extracted watermark matches the original!")
+            print("✅ Watermark verification successful: The extracted watermark text matches the original!")
         else:
-            print("❌ Watermark extraction failed: The extracted watermark does not match the original.")
+            print("❌ Watermark verification failed: The extracted watermark text does not match the original.")
 
 if __name__ == "__main__":
     main()
