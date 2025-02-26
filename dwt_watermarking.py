@@ -1,149 +1,194 @@
 import numpy as np
-import pywt
 from PIL import Image
-from tkinter import Tk, filedialog
+import pywt
 
-def text_to_binary(text):
-    return ''.join(format(ord(c), '08b') for c in text)
+# Function to load and resize an image (watermark) to match the size of the LL subband
+def load_and_resize_image(image_path, size):
+    img = Image.open(image_path).convert("L")  # Convert to grayscale
+    return img.resize(size, Image.Resampling.LANCZOS)  # Resize the image
 
-def binary_to_text(binary_string, text_length):
-    binary_string = binary_string[:text_length * 8]
-    chars = [binary_string[i:i + 8] for i in range(0, len(binary_string), 8)]
-    return ''.join(chr(int(char, 2)) for char in chars)
-
+# Perform DWT on an image (decompose into subbands)
 def apply_dwt(image):
-    return pywt.dwt2(image.astype(float), 'haar')
+    return pywt.dwt2(image.astype(float), 'haar')  # Perform Haar wavelet decomposition
 
+# Perform IDWT to reconstruct an image from its subbands
 def apply_idwt(coeffs2, original_shape):
-    reconstructed = pywt.idwt2(coeffs2, 'haar')
+    reconstructed = pywt.idwt2(coeffs2, 'haar')  # Inverse DWT
+    # Ensure the reconstructed image matches the original shape (crop if necessary)
     if reconstructed.shape != original_shape:
         reconstructed = reconstructed[:original_shape[0], :original_shape[1]]
     return reconstructed
 
-def embed_watermark(image_path, text_watermark, output_path, alpha=0.5):
-    binary_string = text_to_binary(text_watermark)
-    print(f"Original binary string: {binary_string}")
-    print(f"Embedded watermark (binary): {binary_string}")
-    print(f"Embedded watermark text: {text_watermark}")
-
+# Function to embed the watermark into the image using DWT
+def embed_watermark(image_path, watermark_image_path, output_path, alpha=0.1):
+    # Load the main image and convert to RGB
     img = Image.open(image_path).convert("RGB")
     img_array = np.array(img)
     
-    blue_channel = img_array[:, :, 2].astype(np.float32)
-    original_shape = blue_channel.shape
+    # Get the dimensions of the image
+    img_height, img_width, _ = img_array.shape
+    
+    # Initialize an array to store the watermarked image
+    watermarked_img_array = np.zeros_like(img_array, dtype=np.float32)
+    
+    # Loop through each color channel (R, G, B)
+    for i in range(3):  
+        # Perform DWT on the color channel
+        coeffs2 = pywt.dwt2(img_array[:, :, i].astype(np.float32), 'haar')
+        LL, (LH, HL, HH) = coeffs2
+        
+        # Resize the watermark to match the size of the LL subband
+        watermark_gray = load_and_resize_image(watermark_image_path, LL.shape[::-1])  # Ensure correct orientation
+        watermark_array = np.array(watermark_gray).astype(np.float32)
 
-    coeffs2 = apply_dwt(blue_channel)
-    LL, (LH, HL, HH) = coeffs2
+        # Normalize the watermark so it fits within the LL subband's range
+        watermark_array = (watermark_array - np.min(watermark_array)) / (np.max(watermark_array) - np.min(watermark_array))
 
-    wm_size = (LL.shape[0] // 4, LL.shape[1] // 4)
-    wm_array = np.zeros(wm_size, dtype=np.float32)
-    wm_array.flat[:len(binary_string)] = np.array([int(b) for b in binary_string], dtype=np.float32)
+        # Embed the watermark into the LL subband
+        LL += alpha * watermark_array  # Add the scaled watermark to the LL subband
 
-    LL_int = LL[:wm_size[0], :wm_size[1]].astype(np.int32)
-    LL_int = (LL_int & ~1) | wm_array.astype(np.int32)
-    LL[:wm_size[0], :wm_size[1]] = LL_int.astype(np.float32)
+        # Reconstruct the channel using inverse DWT
+        coeffs2 = (LL, (LH, HL, HH))  # Rebuild the subbands with the modified LL
+        channel_watermarked = pywt.idwt2(coeffs2, 'haar')
+        
+        # Resize the reconstructed channel to match the original image dimensions
+        channel_watermarked_resized = np.resize(channel_watermarked, (img_height, img_width))
 
-    watermarked_coeffs2 = (LL, (LH, HL, HH))
-    watermarked_blue = np.clip(apply_idwt(watermarked_coeffs2, original_shape), 0, 255).astype(np.uint8)
+        # Add the watermarked channel to the final image array
+        watermarked_img_array[:, :, i] = channel_watermarked_resized
+    
+    # Clip the pixel values to the valid range [0, 255] and convert to uint8
+    watermarked_img_array = np.clip(watermarked_img_array, 0, 255).astype(np.uint8)
 
-    watermarked_img_array = img_array.copy()
-    watermarked_img_array[:, :, 2] = watermarked_blue
-
+    # Save the watermarked image in WebP format
     watermarked_img = Image.fromarray(watermarked_img_array)
     watermarked_img.save(output_path, "WEBP", lossless=True)
 
-    return wm_size, binary_string
+    print("Watermark embedded successfully!")
 
-def extract_watermark(watermarked_image_path, wm_shape, binary_length, similarity_threshold=1):
-    img = Image.open(watermarked_image_path).convert("RGB")
-    img_array = np.array(img)
-
-    watermarked_blue = img_array[:, :, 2].astype(np.float32)
-
-    coeffs2 = apply_dwt(watermarked_blue)
-    LL, (LH, HL, HH) = coeffs2
-
-    extracted_wm = LL[:wm_shape[0], :wm_shape[1]]
-    extracted_wm_int = extracted_wm.astype(np.int32)
-    extracted_wm_binary = (extracted_wm_int & 1).astype(np.uint8)
-
-    binary_string = ''.join(extracted_wm_binary.flatten().astype(str))[:binary_length]
-    print(f"Extracted binary string: {binary_string}")
-    print(f"Extracted watermark (binary): {binary_string}")
-    extracted_text = binary_to_text(binary_string, len(binary_string) // 8)
-    print(f"Extracted watermark text: {extracted_text}")
-
-    match_percentage = np.mean([1 for i in range(len(binary_string)) if binary_string[i] == extracted_wm_binary.flatten()[i].astype(str)])
-
-    if match_percentage >= similarity_threshold:
-        print(f"✅ Watermark extraction successful: {match_percentage * 100:.2f}% of the binary watermark matches the original!")
-    else:
-        print(f"❌ Watermark extraction failed: Only {match_percentage * 100:.2f}% of the binary watermark matches the original.")
-
-    return extracted_text
-
-def get_valid_watermark():
-    while True:
-        text_watermark = input("Enter the text watermark (any ASCII characters): ").strip()
-        if all(ord(c) < 128 for c in text_watermark):
-            return text_watermark
+# Function to extract the watermark from a watermarked image using DWT
+def extract_watermark(image_path, original_image_path, watermark_image_path, original_watermark_path, alpha=0.1):
+    # Load the watermarked image and the original image
+    watermarked_img = Image.open(image_path).convert("RGB")
+    original_img = Image.open(original_image_path).convert("RGB")
+    
+    # Convert the images to NumPy arrays
+    watermarked_img_array = np.array(watermarked_img)
+    original_img_array = np.array(original_img)
+    
+    # Initialize an empty array for storing the extracted watermark
+    extracted_watermark_array = np.zeros_like(original_img_array, dtype=np.float32)
+    
+    # Perform DWT on both the watermarked and original images
+    for i in range(3):  # Loop through each color channel (R, G, B)
+        # DWT on the watermarked image
+        coeffs2_watermarked = pywt.dwt2(watermarked_img_array[:, :, i].astype(np.float32), 'haar')
+        LL_watermarked, (LH_watermarked, HL_watermarked, HH_watermarked) = coeffs2_watermarked
+        
+        # DWT on the original image
+        coeffs2_original = pywt.dwt2(original_img_array[:, :, i].astype(np.float32), 'haar')
+        LL_original, (LH_original, HL_original, HH_original) = coeffs2_original
+        
+        # Crop both LL subbands to the same size (in case they differ slightly)
+        min_height = min(LL_watermarked.shape[0], LL_original.shape[0])
+        min_width = min(LL_watermarked.shape[1], LL_original.shape[1])
+        
+        # Crop both LL subbands to the same size
+        LL_watermarked_cropped = LL_watermarked[:min_height, :min_width]
+        LL_original_cropped = LL_original[:min_height, :min_width]
+        
+        # Extract the watermark: Subtract the original LL from the watermarked LL and divide by alpha
+        extracted_watermark = (LL_watermarked_cropped - LL_original_cropped) / alpha
+        
+        # Store the extracted watermark in the corresponding channel
+        extracted_watermark_array[:min_height, :min_width, i] = extracted_watermark
+    
+    # Normalize the extracted watermark to the range [0, 255]
+    # Use min-max normalization to ensure the values are properly scaled
+    for i in range(3):  # Normalize each channel separately
+        channel = extracted_watermark_array[:, :, i]
+        channel_min = np.min(channel)
+        channel_max = np.max(channel)
+        if channel_max != channel_min:  # Avoid division by zero
+            extracted_watermark_array[:, :, i] = (channel - channel_min) / (channel_max - channel_min) * 255
         else:
-            print("Invalid input! Please enter only ASCII characters.")
+            extracted_watermark_array[:, :, i] = 0  # If all values are the same, set to 0
+    
+    # Clip the values to ensure they are within the valid range [0, 255]
+    extracted_watermark_array = np.clip(extracted_watermark_array, 0, 255).astype(np.uint8)
+    
+    # Resize the extracted watermark to match the original watermark size
+    watermark_size = Image.open(original_watermark_path).size
+    extracted_watermark_image = Image.fromarray(extracted_watermark_array).resize(watermark_size, Image.Resampling.LANCZOS)
+    
+    # Save the extracted watermark as an image
+    extracted_watermark_image.save(watermark_image_path, "WEBP", lossless=True)
 
+    print("Watermark extracted successfully!")
+
+# Function to open a file dialog for selecting files
 def open_file_dialog(file_types):
+    from tkinter import Tk, filedialog
     root = Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    file_path = filedialog.askopenfilename(filetypes=file_types)
+    root.withdraw()  # Hide the Tkinter root window
+    root.attributes("-topmost", True)  # Keep the file dialog on top
+    file_path = filedialog.askopenfilename(filetypes=file_types)  # Open file dialog
     root.destroy()
     return file_path
 
+# Main function to drive the watermarking tool
 def main():
-    print("Welcome to the Watermarking Tool!")
+    print("Welcome to the DWT Watermarking Tool!")
     print("1. Embed a watermark into an image")
-    print("2. Verify a watermark in an image")
+    print("2. Extract a watermark from an image")
     
     while True:
-        mode = input("Select an option (1 or 2): ").strip()
+        mode = input("Select an option (1 or 2): ").strip()  # Get user input for embedding or extraction
         if mode in ["1", "2"]:
             break
         else:
             print("Invalid option! Please select 1 or 2.")
 
     if mode == "1":
-        print("Please select an image to embed the watermark.")
+        # Embed watermark mode
+        print("Please select an image to embed the watermark into.")
         image_path = open_file_dialog([("JPEG Files", "*.jpg;*.jpeg"), ("PNG Files", "*.png")])
         if not image_path:
             print("No image selected. Exiting.")
             return
 
-        text_watermark = get_valid_watermark()
-        print(f"Embedding watermark text: {text_watermark}")
+        print("Please select a watermark image.")
+        watermark_image_path = open_file_dialog([("JPEG Files", "*.jpg;*.jpeg"), ("PNG Files", "*.png")])
+        if not watermark_image_path:
+            print("No watermark image selected. Exiting.")
+            return
 
-        wm_shape, binary_string = embed_watermark(image_path, text_watermark, "watermarked_image.webp")
+        embed_watermark(image_path, watermark_image_path, "watermarked_image.webp")
         print("Watermark embedded successfully!")
 
     elif mode == "2":
-        print("Please select an image to verify the watermark.")
-        image_path = open_file_dialog([("WebP Files", "*.webp")])
-        if not image_path:
-            print("No image selected. Exiting.")
+        # Extract watermark mode
+        print("Please select the watermarked image (the image with the embedded watermark) for extraction.")
+        watermarked_image_path = open_file_dialog([("WEBP Files", "*.webp")])
+        if not watermarked_image_path:
+            print("No watermarked image selected. Exiting.")
             return
 
-        text_watermark = get_valid_watermark()
-        print(f"Verifying watermark: {text_watermark}")
+        print("Please select the original image (the image that was used to embed the watermark) for extraction.")
+        original_image_path = open_file_dialog([("JPEG Files", "*.jpg;*.jpeg"), ("PNG Files", "*.png")])
+        if not original_image_path:
+            print("No original image selected. Exiting.")
+            return
 
-        extracted_text = extract_watermark(
-            image_path,
-            wm_shape=(100, 100),
-            binary_length=len(text_watermark) * 8,
-            similarity_threshold=0.95
-        )
+        print("Please select the original watermark image (the image that was embedded) for resizing.")
+        original_watermark_path = open_file_dialog([("JPEG Files", "*.jpg;*.jpeg"), ("PNG Files", "*.png")])
+        if not original_watermark_path:
+            print("No original watermark image selected. Exiting.")
+            return
 
-        if extracted_text == text_watermark:
-            print("✅ Watermark verification successful: The extracted watermark text matches the original!")
-        else:
-            print("❌ Watermark verification failed: The extracted watermark text does not match the original.")
+        extract_watermark(watermarked_image_path, original_image_path, "extracted_watermark.webp", original_watermark_path)
+        print("Watermark extracted successfully!")
 
+# Run the program
 if __name__ == "__main__":
     main()
