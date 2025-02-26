@@ -24,7 +24,7 @@ def apply_idwt_dct(dct_LL, subbands):
     LL = cv2.idct(dct_LL)  # Inverse DCT
     return pywt.idwt2((LL, subbands), 'haar')
 
-def embed_watermark(image_path, watermark_image_path, output_path, alpha=0.05):
+def embed_watermark(image_path, watermark_image_path, output_path, alpha=0.1):
     """Embed the watermark using DWT + DCT + SVD."""
     img = Image.open(image_path).convert("RGB")  # Load image in color (RGB)
     img_array = np.array(img, dtype=np.float32)
@@ -60,7 +60,7 @@ def embed_watermark(image_path, watermark_image_path, output_path, alpha=0.05):
     watermarked_img.save(output_path, "WEBP", lossless=True)
     print("Watermark embedded successfully in color!")
 
-def extract_watermark(image_path, original_image_path, original_watermark_path, extracted_watermark_path, alpha=0.05):
+def extract_watermark(image_path, original_image_path, original_watermark_path, extracted_watermark_path, alpha=0.1):
     """Extract the watermark from a watermarked image."""
     watermarked_img = Image.open(image_path).convert("RGB")
     original_img = Image.open(original_image_path).convert("RGB")
@@ -109,7 +109,7 @@ def extract_watermark(image_path, original_image_path, original_watermark_path, 
     extracted_watermark = extracted_watermark.resize(original_watermark_size, Image.Resampling.LANCZOS)
     extracted_watermark.save(extracted_watermark_path, "WEBP", lossless=True)
     print("Watermark extracted successfully!")
-    
+
 def detect_watermark(image_path, original_image_path, watermark_image_path, threshold=0.7):
     """Detect if the watermark is present using correlation analysis."""
     extracted_watermark_path = "temp_extracted_watermark.webp"
